@@ -15,16 +15,17 @@ graph TD
     end
 
     subgraph "Execution Plane"
-        B -- "1. Ingest" --> C[Source Data];
-        C -- "2. Load" --> D[(Data Warehouse e.g., ClickHouse)];
-        B -- "3. Transform" --> E{dbt};
-        E -- "4. Test" --> F[Great Expectations];
-        F -- "5. Validate" --> D;
+        B -- "1. Ingest & Load" --> D[(Data Warehouse e.g., ClickHouse)];
+        C[Source Data] -.-> B;
+        B -- "2. Transform" --> E{dbt};
+        E -- "Runs against" --> D;
+        B -- "3. Validate" --> F[Great Expectations];
+        F -- "Runs against" --> D;
     end
 
     subgraph "Governance Layer"
         A -- "Defines policies for" --> G((Data Governance));
-        G -- "Enforces" --> D;
+        G -- "Enforces on" --> D;
     end
 
     style A fill:#D6EAF8,stroke:#333,stroke-width:2px
