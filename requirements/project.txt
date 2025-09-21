@@ -1,7 +1,9 @@
 boto3
 s3fs
-pandas
 pyyaml
-dbt-core
-dbt-postgres
-great-expectations
+dbt-core~=1.7.14
+dbt-postgres~=1.7.14
+great-expectations==0.18.14
+psycopg2-binary>=2.9
+pandas==1.5.3
+

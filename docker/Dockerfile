@@ -28,11 +28,13 @@ RUN pip install --no-cache-dir --upgrade pip
 # Copy requirements
 COPY requirements /tmp/requirements
 
-# Install dependencies (uv by default; fallback to pip with --build-arg USE_UV=false)
+# Install dependencies with corrected logic
+# First, install project dependencies without constraints
+# Then, install Airflow providers with constraints
 RUN if [ "$USE_UV" = "true" ]; then \
-      uv pip install --system --no-cache -r /tmp/requirements/airflow-providers.txt -c "${CONSTRAINT_URL}" && \
-      uv pip install --system --no-cache -r /tmp/requirements/project.txt ; \
+      uv pip install --system --no-cache -r /tmp/requirements/project.txt && \
+      uv pip install --system --no-cache -r /tmp/requirements/airflow-providers.txt -c "${CONSTRAINT_URL}"; \
     else \
-      pip install --no-cache-dir --constraint "${CONSTRAINT_URL}" -r /tmp/requirements/airflow-providers.txt && \
-      pip install --no-cache-dir -r /tmp/requirements/project.txt ; \
+      pip install --no-cache-dir -r /tmp/requirements/project.txt && \
+      pip install --no-cache-dir --constraint "${CONSTRAINT_URL}" -r /tmp/requirements/airflow-providers.txt; \
     fi

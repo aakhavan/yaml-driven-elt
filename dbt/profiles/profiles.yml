@@ -1,12 +1,14 @@
-﻿olist:
+﻿# yaml
+# File: `dbt/profiles.yml`
+olist_pg:
   target: dev
   outputs:
     dev:
       type: postgres
-      host: postgres-warehouse
-      user: warehouse
-      password: warehouse
-      port: 5432
-      dbname: warehouse
-      schema: analytics
+      host: "{{ env_var('DBT_HOST', 'postgres-warehouse') }}"
+      user: "{{ env_var('DBT_USER', 'warehouse') }}"
+      password: "{{ env_var('DBT_PASSWORD', 'warehouse') }}"
+      dbname: "{{ env_var('DBT_DBNAME', 'warehouse') }}"
+      schema: "{{ env_var('DBT_SCHEMA', 'analytics') }}"
+      port: "{{ env_var('DBT_PORT', '5432') | int }}"
       threads: 4
