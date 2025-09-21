@@ -1,0 +1,4 @@
+﻿order_id,order_status,order_purchase_timestamp
+1,delivered,2025-01-01 10:00:00
+2,shipped,2025-01-02 12:30:00
+3,canceled,2025-01-03 09:15:00

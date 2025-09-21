@@ -1,0 +1,14 @@
+pipeline_id: sample_s3_to_pg
+source:
+  type: s3_csv
+  conf:
+    bucket: demo
+    key: sample.csv
+destination:
+  schema: public
+  table: sample_data
+  write_mode: truncate-insert
+transform: {}
+quality: {}
+catalog:
+  generate: false

@@ -1,0 +1,6 @@
+apache-airflow-providers-postgres
+apache-airflow-providers-amazon
+apache-airflow-providers-google
+google-cloud-secret-manager
+proto-plus==1.23.0
+protobuf==4.25.3

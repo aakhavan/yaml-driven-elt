@@ -1,0 +1,11 @@
+﻿version: 2
+
+models:
+  - name: orders_summary
+    columns:
+      - name: order_status
+        tests:
+          - not_null
+      - name: cnt
+        tests:
+          - not_null

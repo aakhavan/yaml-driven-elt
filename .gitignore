@@ -1,0 +1,48 @@
+# Python artifacts
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.egg-info/
+.eggs/
+
+# Virtual Environments
+venv/
+env/
+.venv/
+
+# Build and distribution
+build/
+dist/
+*.egg
+
+# IDE configuration
+.idea/
+.vscode/
+
+# Log files
+*.log
+logs/
+
+# Airflow generated files
+/airflow/logs/
+/airflow/*.db
+/airflow/*.pid
+/airflow/webserver_config.py
+/airflow/unittests.cfg
+
+# dbt generated files
+/dbt/dbt_packages/
+/dbt/logs/
+/dbt/target/
+
+# Great Expectations generated files
+/great_expectations/uncommitted/
+
+# Secrets and environment variables
+*.env
+secrets.yml
+
+# Data files
+/data/*
+!/data/.gitkeep

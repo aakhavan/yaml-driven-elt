@@ -1,0 +1,7 @@
+boto3
+s3fs
+pandas
+pyyaml
+dbt-core
+dbt-postgres
+great-expectations

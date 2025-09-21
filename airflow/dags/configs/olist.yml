@@ -1,0 +1,288 @@
+version: 1
+
+sync:
+  name: olist_poc
+  source:
+    type: s3
+    conn_id: minio_s3
+    bucket: olist
+  destination:
+    type: postgres
+    conn_id: postgres_warehouse
+    default_schema: olist
+    table_prefix: stg_
+
+tables:
+  - id: product_category_name_translation
+    source:
+      key: product_category_name_translation.csv
+    table:
+      name: stg_product_category_name_translation
+      write_mode: truncate-insert
+    table_definition:
+      columns:
+        - { name: product_category_name, type: string, nullable: true, description: "TBD: business definition" }
+        - { name: product_category_name_english, type: string, nullable: true, description: "TBD: business definition" }
+    quality:
+      table:
+        checks: [ { name: row_count_min, min: 1 } ]
+    catalog:
+      table_description: "TBD: Olist product category name translation lookup."
+      columns:
+        - { name: product_category_name, description: "TBD: Original category name." }
+        - { name: product_category_name_english, description: "TBD: English translation of the category." }
+
+  - id: customers
+    source:
+      key: olist_customers_dataset.csv
+    table:
+      name: stg_customers
+      write_mode: truncate-insert
+    table_definition:
+      primary_key: [customer_id]
+      columns:
+        - { name: customer_id, type: string, nullable: false, description: "TBD: Unique customer identifier (dataset scope)." }
+        - { name: customer_unique_id, type: string, nullable: true, description: "TBD: Customer person identifier across orders." }
+        - { name: customer_zip_code_prefix, type: integer, nullable: true, description: "TBD: ZIP code prefix." }
+        - { name: customer_city, type: string, nullable: true, description: "TBD: City name." }
+        - { name: customer_state, type: string, nullable: true, description: "TBD: State code." }
+    quality:
+      table:
+        checks: [ { name: row_count_min, min: 1 } ]
+      columns:
+        - name: customer_id
+          checks: [ { name: not_null }, { name: unique } ]
+    catalog:
+      table_description: "TBD: Olist customers dimension."
+      columns:
+        - { name: customer_id, description: "TBD: Surrogate customer id in dataset." }
+        - { name: customer_unique_id, description: "TBD: Natural customer identifier." }
+        - { name: customer_zip_code_prefix, description: "TBD: ZIP prefix of customer address." }
+        - { name: customer_city, description: "TBD: Customer city." }
+        - { name: customer_state, description: "TBD: Customer state (2-letter code)." }
+
+  - id: sellers
+    source:
+      key: olist_sellers_dataset.csv
+    table:
+      name: stg_sellers
+      write_mode: truncate-insert
+    table_definition:
+      primary_key: [seller_id]
+      columns:
+        - { name: seller_id, type: string, nullable: false, description: "TBD: Unique seller identifier." }
+        - { name: seller_zip_code_prefix, type: integer, nullable: true, description: "TBD: ZIP code prefix." }
+        - { name: seller_city, type: string, nullable: true, description: "TBD: City name." }
+        - { name: seller_state, type: string, nullable: true, description: "TBD: State code." }
+    quality:
+      table:
+        checks: [ { name: row_count_min, min: 1 } ]
+      columns:
+        - name: seller_id
+          checks: [ { name: not_null }, { name: unique } ]
+    catalog:
+      table_description: "TBD: Olist sellers dimension."
+      columns:
+        - { name: seller_id, description: "TBD: Surrogate seller id in dataset." }
+        - { name: seller_zip_code_prefix, description: "TBD: ZIP prefix of seller address." }
+        - { name: seller_city, description: "TBD: Seller city." }
+        - { name: seller_state, description: "TBD: Seller state (2-letter code)." }
+
+  - id: products
+    source:
+      key: olist_products_dataset.csv
+    table:
+      name: stg_products
+      write_mode: truncate-insert
+    table_definition:
+      primary_key: [product_id]
+      columns:
+        - { name: product_id, type: string, nullable: false, description: "TBD: Unique product identifier." }
+        - { name: product_category_name, type: string, nullable: true, description: "TBD: Product category." }
+        - { name: product_name_lenght, type: integer, nullable: true, description: "TBD: Name length (note: source typo 'lenght')." }
+        - { name: product_description_lenght, type: integer, nullable: true, description: "TBD: Description length (note: source typo 'lenght')." }
+        - { name: product_photos_qty, type: integer, nullable: true, description: "TBD: Number of photos." }
+        - { name: product_weight_g, type: integer, nullable: true, description: "TBD: Weight in grams." }
+        - { name: product_length_cm, type: integer, nullable: true, description: "TBD: Length in cm." }
+        - { name: product_height_cm, type: integer, nullable: true, description: "TBD: Height in cm." }
+        - { name: product_width_cm, type: integer, nullable: true, description: "TBD: Width in cm." }
+    quality:
+      table:
+        checks: [ { name: row_count_min, min: 1 } ]
+      columns:
+        - name: product_id
+          checks: [ { name: not_null }, { name: unique } ]
+    catalog:
+      table_description: "TBD: Olist products dimension."
+      columns:
+        - { name: product_id, description: "TBD: Product identifier." }
+        - { name: product_category_name, description: "TBD: Product category (raw)." }
+        - { name: product_name_lenght, description: "TBD: Length of product name." }
+        - { name: product_description_lenght, description: "TBD: Length of product description." }
+        - { name: product_photos_qty, description: "TBD: Number of product photos." }
+        - { name: product_weight_g, description: "TBD: Product weight in grams." }
+        - { name: product_length_cm, description: "TBD: Product length in cm." }
+        - { name: product_height_cm, description: "TBD: Product height in cm." }
+        - { name: product_width_cm, description: "TBD: Product width in cm." }
+
+  - id: orders
+    source:
+      key: olist_orders_dataset.csv
+    table:
+      name: stg_orders
+      write_mode: truncate-insert
+    table_definition:
+      primary_key: [order_id]
+      columns:
+        - { name: order_id, type: string, nullable: false, description: "TBD: Unique order identifier." }
+        - { name: customer_id, type: string, nullable: false, description: "TBD: Customer id foreign key." }
+        - { name: order_status, type: string, nullable: true, description: "TBD: Order status lifecycle." }
+        - { name: order_purchase_timestamp, type: datetime, nullable: true, description: "TBD: Purchase timestamp." }
+        - { name: order_approved_at, type: datetime, nullable: true, description: "TBD: Approval timestamp." }
+        - { name: order_delivered_carrier_date, type: datetime, nullable: true, description: "TBD: Carrier handoff timestamp." }
+        - { name: order_delivered_customer_date, type: datetime, nullable: true, description: "TBD: Customer delivery timestamp." }
+        - { name: order_estimated_delivery_date, type: datetime, nullable: true, description: "TBD: Estimated delivery date." }
+    quality:
+      table:
+        checks: [ { name: row_count_min, min: 1 } ]
+      columns:
+        - name: order_id
+          checks: [ { name: not_null }, { name: unique } ]
+        - name: customer_id
+          checks: [ { name: not_null } ]
+        - name: order_status
+          checks:
+            - { name: allowed_values, values: ["delivered","shipped","invoiced","canceled","processing","approved","created","unavailable"] }
+    catalog:
+      table_description: "TBD: Olist orders fact header."
+      columns:
+        - { name: order_id, description: "TBD: Order identifier." }
+        - { name: customer_id, description: "TBD: References customers.customer_id." }
+        - { name: order_status, description: "TBD: Current order status." }
+        - { name: order_purchase_timestamp, description: "TBD: When order was placed." }
+        - { name: order_approved_at, description: "TBD: When order was approved." }
+        - { name: order_delivered_carrier_date, description: "TBD: When handed to carrier." }
+        - { name: order_delivered_customer_date, description: "TBD: When delivered to customer." }
+        - { name: order_estimated_delivery_date, description: "TBD: Estimated delivery date." }
+
+  - id: order_items
+    source:
+      key: olist_order_items_dataset.csv
+    table:
+      name: stg_order_items
+      write_mode: truncate-insert
+    table_definition:
+      primary_key: [order_id, order_item_id]
+      columns:
+        - { name: order_id, type: string, nullable: false, description: "TBD: Order id foreign key." }
+        - { name: order_item_id, type: integer, nullable: false, description: "TBD: Line number within order." }
+        - { name: product_id, type: string, nullable: false, description: "TBD: Product id foreign key." }
+        - { name: seller_id, type: string, nullable: false, description: "TBD: Seller id foreign key." }
+        - { name: shipping_limit_date, type: datetime, nullable: true, description: "TBD: Shipping SLA limit." }
+        - { name: price, type: decimal, precision: 18, scale: 4, nullable: true, description: "TBD: Line price." }
+        - { name: freight_value, type: decimal, precision: 18, scale: 4, nullable: true, description: "TBD: Freight value." }
+    quality:
+      table:
+        checks: [ { name: row_count_min, min: 1 } ]
+      columns:
+        - name: order_id
+          checks: [ { name: not_null } ]
+        - name: product_id
+          checks: [ { name: not_null } ]
+    catalog:
+      table_description: "TBD: Olist order items fact lines."
+      columns:
+        - { name: order_id, description: "TBD: References orders.order_id." }
+        - { name: order_item_id, description: "TBD: Sequence of item in the order." }
+        - { name: product_id, description: "TBD: References products.product_id." }
+        - { name: seller_id, description: "TBD: References sellers.seller_id." }
+        - { name: shipping_limit_date, description: "TBD: Shipping deadline for the item." }
+        - { name: price, description: "TBD: Item price." }
+        - { name: freight_value, description: "TBD: Item freight cost." }
+
+  - id: order_payments
+    source:
+      key: olist_order_payments_dataset.csv
+    table:
+      name: stg_order_payments
+      write_mode: truncate-insert
+    table_definition:
+      primary_key: [order_id, payment_sequential]
+      columns:
+        - { name: order_id, type: string, nullable: false, description: "TBD: Order id foreign key." }
+        - { name: payment_sequential, type: integer, nullable: false, description: "TBD: Payment attempt sequence." }
+        - { name: payment_type, type: string, nullable: true, description: "TBD: Payment method type." }
+        - { name: payment_installments, type: integer, nullable: true, description: "TBD: Number of installments." }
+        - { name: payment_value, type: decimal, precision: 18, scale: 4, nullable: true, description: "TBD: Payment amount." }
+    quality:
+      table:
+        checks: [ { name: row_count_min, min: 1 } ]
+      columns:
+        - name: order_id
+          checks: [ { name: not_null } ]
+    catalog:
+      table_description: "TBD: Olist order payments fact."
+      columns:
+        - { name: order_id, description: "TBD: References orders.order_id." }
+        - { name: payment_sequential, description: "TBD: Payment sequence within order." }
+        - { name: payment_type, description: "TBD: Payment method." }
+        - { name: payment_installments, description: "TBD: Installment count." }
+        - { name: payment_value, description: "TBD: Payment value." }
+
+  - id: order_reviews
+    source:
+      key: olist_order_reviews_dataset.csv
+    table:
+      name: stg_order_reviews
+      write_mode: truncate-insert
+    table_definition:
+      primary_key: [review_id]
+      columns:
+        - { name: review_id, type: string, nullable: false, description: "TBD: Unique review identifier." }
+        - { name: order_id, type: string, nullable: false, description: "TBD: Order id foreign key." }
+        - { name: review_score, type: integer, nullable: true, description: "TBD: Review score (1-5)." }
+        - { name: review_comment_title, type: string, nullable: true, description: "TBD: Review title." }
+        - { name: review_comment_message, type: string, nullable: true, description: "TBD: Review text." }
+        - { name: review_creation_date, type: datetime, nullable: true, description: "TBD: When review was created." }
+        - { name: review_answer_timestamp, type: datetime, nullable: true, description: "TBD: When review was answered." }
+    quality:
+      table:
+        checks: [ { name: row_count_min, min: 1 } ]
+      columns:
+        - name: review_id
+          checks: [ { name: not_null }, { name: unique } ]
+    catalog:
+      table_description: "TBD: Olist order reviews fact."
+      columns:
+        - { name: review_id, description: "TBD: Review identifier." }
+        - { name: order_id, description: "TBD: References orders.order_id." }
+        - { name: review_score, description: "TBD: Score of the review." }
+        - { name: review_comment_title, description: "TBD: Title of the review." }
+        - { name: review_comment_message, description: "TBD: Message body of the review." }
+        - { name: review_creation_date, description: "TBD: Review creation timestamp." }
+        - { name: review_answer_timestamp, description: "TBD: Review response timestamp." }
+
+  - id: geolocation
+    source:
+      key: olist_geolocation_dataset.csv
+    table:
+      name: stg_geolocation
+      write_mode: truncate-insert
+    table_definition:
+      columns:
+        - { name: geolocation_zip_code_prefix, type: integer, nullable: true, description: "TBD: ZIP code prefix." }
+        - { name: geolocation_lat, type: float, nullable: true, description: "TBD: Latitude." }
+        - { name: geolocation_lng, type: float, nullable: true, description: "TBD: Longitude." }
+        - { name: geolocation_city, type: string, nullable: true, description: "TBD: City name." }
+        - { name: geolocation_state, type: string, nullable: true, description: "TBD: State code." }
+    quality:
+      table:
+        checks: [ { name: row_count_min, min: 1 } ]
+    catalog:
+      table_description: "TBD: Olist geo lookup by ZIP prefix."
+      columns:
+        - { name: geolocation_zip_code_prefix, description: "TBD: ZIP prefix key." }
+        - { name: geolocation_lat, description: "TBD: Latitude of the area." }
+        - { name: geolocation_lng, description: "TBD: Longitude of the area." }
+        - { name: geolocation_city, description: "TBD: City of the ZIP prefix." }
+        - { name: geolocation_state, description: "TBD: State of the ZIP prefix." }
