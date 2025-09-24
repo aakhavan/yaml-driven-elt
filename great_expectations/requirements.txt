@@ -1,4 +1,9 @@
-﻿great_expectations>=0.18.0
-pandas
-sqlalchemy
-psycopg2-binary
+﻿# Isolated GE runner deps (pinned for stability with GE 0.18.x)
+# Note: keep these isolated from Airflow deps by using a dedicated container.
+great-expectations==0.18.14
+pandas==1.5.3
+sqlalchemy>=1.4,<2.0
+psycopg2-binary>=2.9
+PyYAML>=6.0
+boto3>=1.28
+

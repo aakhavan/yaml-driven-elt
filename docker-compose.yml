@@ -156,5 +156,23 @@ services:
         condition: service_completed_successfully
     command: ["airflow", "scheduler"]
 
+  gx-runner:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.gx
+    depends_on:
+      postgres-warehouse:
+        condition: service_healthy
+    environment:
+      # Point GX to the warehouse DB inside the compose network
+      DATABASE_URL: postgresql+psycopg2://warehouse:warehouse@postgres-warehouse:5432/warehouse
+    volumes:
+      # Mount YAML config as /app/config.yml (read-only)
+      - ./airflow/dags/configs/olist.yml:/app/config.yml:ro
+      # Capture validation JSON outputs locally
+      - ./great_expectations/validations:/app/output
+    command: ["python", "/app/gx_runner.py", "--config", "/app/config.yml", "--source-id", "olist_poc"]
+    restart: "no"
+
 volumes:
   minio_data:

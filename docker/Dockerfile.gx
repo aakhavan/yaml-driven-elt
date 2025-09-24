@@ -1,0 +1,28 @@
+# GE runner image: isolated from Airflow to avoid dependency conflicts
+FROM python:3.11-slim
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1
+
+# System deps
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    ca-certificates \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+# Workdir
+WORKDIR /app
+
+# Install Python deps for GX runner
+COPY great_expectations/requirements.txt /tmp/requirements.txt
+RUN pip install --upgrade pip && \
+    pip install -r /tmp/requirements.txt
+
+# App files
+COPY great_expectations/gx_runner.py /app/gx_runner.py
+
+# Default command shows help
+CMD ["python", "/app/gx_runner.py", "--help"]
+
