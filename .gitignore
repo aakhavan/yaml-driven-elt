@@ -38,6 +38,9 @@ logs/
 
 # Great Expectations generated files
 /great_expectations/uncommitted/
+# Great Expectations run artifacts
+/great_expectations/validations/*.json
+/great_expectations/context/uncommitted/
 
 # Secrets and environment variables
 *.env

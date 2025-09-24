@@ -6,4 +6,4 @@ sqlalchemy>=1.4,<2.0
 psycopg2-binary>=2.9
 PyYAML>=6.0
 boto3>=1.28
-
+pydantic<2

@@ -6,13 +6,13 @@ from datetime import datetime
 from typing import Any, Dict, List
 
 import yaml
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, inspect
 
-# Great Expectations legacy Dataset API (works with GE 0.18.x)
+# Use modern Great Expectations API (works with GE 0.18+ and 1.x)
 try:
-    from great_expectations.dataset import SqlAlchemyDataset  # type: ignore
-except Exception as e:  # pragma: no cover
-    print(f"Failed to import Great Expectations SqlAlchemyDataset: {e}", file=sys.stderr)
+    import great_expectations as gx
+except Exception as e:
+    print(f"Failed to import great_expectations: {e}", file=sys.stderr)
     sys.exit(2)
 
 
@@ -30,64 +30,118 @@ def build_engine_from_env() -> Any:
     return create_engine(database_url)
 
 
-def apply_table_expectations(dataset: SqlAlchemyDataset, checks: List[Dict[str, Any]]):
+def ensure_sql_datasource(context: Any, name: str, connection_string: str):
+    sources = context.sources
+    if hasattr(sources, "add_or_update_sql"):
+        return sources.add_or_update_sql(name=name, connection_string=connection_string)
+    if hasattr(sources, "add_sql"):
+        try:
+            return sources.add_sql(name=name, connection_string=connection_string)
+        except Exception:
+            pass
+    # Fallback: try to fetch existing datasource by name
+    try:
+        return context.get_datasource(name)
+    except Exception as e:
+        raise RuntimeError(f"Could not create or fetch SQL datasource '{name}': {e}")
+
+
+def apply_table_expectations_validator(validator: Any, checks: List[Dict[str, Any]]):
     for chk in checks or []:
         name = chk.get("name")
         if name == "row_count_min":
             min_rows = int(chk.get("min", 1))
-            dataset.expect_table_row_count_to_be_greater_than(value=min_rows - 1)
+            # Use between with only min_value to support broad GE versions
+            validator.expect_table_row_count_to_be_between(min_value=min_rows)
         elif name == "row_count_between":
             min_v = chk.get("min")
             max_v = chk.get("max")
-            dataset.expect_table_row_count_to_be_between(min_value=min_v, max_value=max_v)
-        # extend with more table-level expectations as needed
+            validator.expect_table_row_count_to_be_between(min_value=min_v, max_value=max_v)
 
 
-def apply_column_expectations(dataset: SqlAlchemyDataset, col_name: str, checks: List[Dict[str, Any]]):
+def apply_column_expectations_validator(validator: Any, col_name: str, checks: List[Dict[str, Any]]):
     for chk in checks or []:
         name = chk.get("name")
         if name == "not_null":
-            dataset.expect_column_values_to_not_be_null(col_name)
+            validator.expect_column_values_to_not_be_null(col_name)
         elif name == "unique":
-            dataset.expect_column_values_to_be_unique(col_name)
+            validator.expect_column_values_to_be_unique(col_name)
         elif name == "allowed_values":
             values = chk.get("values", [])
-            dataset.expect_column_values_to_be_in_set(col_name, values)
+            validator.expect_column_values_to_be_in_set(col_name, values)
         elif name == "regex":
             pattern = chk.get("pattern")
             if pattern:
-                dataset.expect_column_values_to_match_regex(col_name, pattern)
+                validator.expect_column_values_to_match_regex(col_name, pattern)
         elif name == "range":
             min_v = chk.get("min")
             max_v = chk.get("max")
-            dataset.expect_column_values_to_be_between(col_name, min_value=min_v, max_value=max_v)
-        # add more mappings as needed
+            validator.expect_column_values_to_be_between(col_name, min_value=min_v, max_value=max_v)
 
 
-def run_for_table(engine, schema: str, table_name: str, tbl_cfg: Dict[str, Any], output_dir: str) -> Dict[str, Any]:
-    ds = SqlAlchemyDataset(table_name=table_name, engine=engine, schema=schema)
+def run_for_table(context: Any, engine, datasource, schema: str, table_name: str, tbl_cfg: Dict[str, Any], output_dir: str) -> Dict[str, Any]:
+    # Skip if table does not exist
+    inspector = inspect(engine)
+    if not inspector.has_table(table_name, schema=schema):
+        return {
+            "success": False,
+            "meta": {"reason": "missing_table", "schema": schema, "table": table_name},
+            "statistics": {"evaluated_expectations": 0, "successful_expectations": 0, "unsuccessful_expectations": 0},
+        }
+
+    asset_name = f"{schema}_{table_name}"
+    # Create or update table asset
+    asset = datasource.add_table_asset(name=asset_name, table_name=table_name, schema_name=schema)
+    batch_request = asset.build_batch_request()
+
+    suite_name = f"{schema}.{table_name}_suite"
+    try:
+        suite = context.get_expectation_suite(suite_name)
+    except Exception:
+        try:
+            from great_expectations.core.expectation_suite import ExpectationSuite
+        except Exception:
+            # Older GE import path
+            from great_expectations.core import ExpectationSuite  # type: ignore
+        suite = ExpectationSuite(expectation_suite_name=suite_name)
+
+    try:
+        validator = context.get_validator(batch_request=batch_request, expectation_suite=suite)
+    except TypeError:
+        # Fallback for older API where only name is accepted
+        validator = context.get_validator(batch_request=batch_request, expectation_suite_name=suite_name)
 
     # Table-level checks
     table_checks = (tbl_cfg.get("quality") or {}).get("table", {}).get("checks", [])
-    apply_table_expectations(ds, table_checks)
+    apply_table_expectations_validator(validator, table_checks)
 
     # Column-level checks
     for col_cfg in ((tbl_cfg.get("quality") or {}).get("columns") or []):
         col_name = col_cfg.get("name")
         if not col_name:
             continue
-        apply_column_expectations(ds, col_name, col_cfg.get("checks", []))
+        apply_column_expectations_validator(validator, col_name, col_cfg.get("checks", []))
 
-    results = ds.validate()
+    result = validator.validate()
+
+    # Convert result to serializable dict if possible
+    if hasattr(result, "to_json_dict"):
+        result_dict = result.to_json_dict()
+    else:
+        # Fallback best-effort
+        try:
+            result_dict = json.loads(result.to_json())  # type: ignore[attr-defined]
+        except Exception:
+            result_dict = {"success": getattr(result, "success", False)}
 
     # Persist result JSON
     os.makedirs(output_dir, exist_ok=True)
     ts = datetime.utcnow().strftime("%Y%m%dT%H%M%SZ")
     out_path = os.path.join(output_dir, f"{schema}.{table_name}_{ts}.json")
     with open(out_path, "w", encoding="utf-8") as f:
-        json.dump(results, f, indent=2, default=str)
+        json.dump(result_dict, f, indent=2, default=str)
 
-    return results
+    return result_dict
 
 
 def parse_args() -> argparse.Namespace:
@@ -96,6 +150,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--source-id", default=None, help="Optional sync.name to filter (e.g., olist_poc)")
     p.add_argument("--only", nargs="*", default=None, help="Optional list of table ids to run (matches 'tables[].id')")
     p.add_argument("--output", default="/app/output", help="Directory to write validation result JSONs")
+    p.add_argument("--build-docs", action="store_true", help="Build local Data Docs after validation")
     return p.parse_args()
 
 
@@ -120,7 +175,12 @@ def main():
         print("No tables selected to validate.")
         return 0
 
+    # Build SQL engine (only for existence check) and GE context/datasource
     engine = build_engine_from_env()
+    database_url = os.getenv("DATABASE_URL")
+    context_root = os.getenv("GX_CONTEXT_ROOT_DIR", "/app/gx")
+    context = gx.get_context(context_root_dir=context_root)
+    datasource = ensure_sql_datasource(context, name="warehouse", connection_string=database_url)
 
     any_failed = False
     summary = []
@@ -130,15 +190,47 @@ def main():
             print(f"Skipping table with missing name: {t.get('id')}")
             continue
         print(f"Running expectations for {schema}.{table_name}...")
-        res = run_for_table(engine, schema, table_name, t, args.output)
-        success = bool(res.get("success", False))
-        summary.append({
-            "table": f"{schema}.{table_name}",
-            "success": success,
-            "statistics": res.get("statistics", {}),
-        })
-        if not success:
+        try:
+            res = run_for_table(context, engine, datasource, schema, table_name, t, args.output)
+            # Persist/Update the suite after applying expectations (if validator created it)
+            try:
+                # get validator again to ensure latest expectations and save
+                asset = datasource.get_asset(f"{schema}_{table_name}")
+                batch_request = asset.build_batch_request()
+                suite_name = f"{schema}.{table_name}_suite"
+                try:
+                    validator = context.get_validator(batch_request=batch_request, expectation_suite_name=suite_name)
+                except TypeError:
+                    from great_expectations.core.expectation_suite import ExpectationSuite
+                    suite = ExpectationSuite(expectation_suite_name=suite_name)
+                    validator = context.get_validator(batch_request=batch_request, expectation_suite=suite)
+                validator.save_expectation_suite(discard_failed_expectations=False)
+            except Exception:
+                pass
+
+            success = bool(res.get("success", False))
+            summary.append({
+                "table": f"{schema}.{table_name}",
+                "success": success,
+                "statistics": res.get("statistics", {}),
+                "meta": res.get("meta", {}),
+            })
+            if not success:
+                any_failed = True
+        except Exception as e:
+            summary.append({
+                "table": f"{schema}.{table_name}",
+                "success": False,
+                "error": str(e),
+            })
             any_failed = True
+
+    if args.build_docs:
+        try:
+            context.build_data_docs()
+            print(f"Built Data Docs at context: {context_root}")
+        except Exception as e:
+            print(f"Failed to build Data Docs: {e}")
 
     print("Validation Summary:")
     print(json.dumps(summary, indent=2))
@@ -148,4 +240,3 @@ def main():
 
 if __name__ == "__main__":
     sys.exit(main())
-

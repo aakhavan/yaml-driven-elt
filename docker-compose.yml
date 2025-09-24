@@ -166,12 +166,15 @@ services:
     environment:
       # Point GX to the warehouse DB inside the compose network
       DATABASE_URL: postgresql+psycopg2://warehouse:warehouse@postgres-warehouse:5432/warehouse
+      GX_CONTEXT_ROOT_DIR: /app/gx
     volumes:
       # Mount YAML config as /app/config.yml (read-only)
       - ./airflow/dags/configs/olist.yml:/app/config.yml:ro
       # Capture validation JSON outputs locally
       - ./great_expectations/validations:/app/output
-    command: ["python", "/app/gx_runner.py", "--config", "/app/config.yml", "--source-id", "olist_poc"]
+      # Persist Great Expectations context (suites, checkpoints, Data Docs)
+      - ./great_expectations/context:/app/gx
+    command: ["python", "/app/gx_runner.py", "--config", "/app/config.yml", "--source-id", "olist_poc", "--build-docs"]
     restart: "no"
 
 volumes:
