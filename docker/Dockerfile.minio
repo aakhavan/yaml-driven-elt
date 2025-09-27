@@ -1,0 +1,10 @@
+# Minimal seeder image built on MinIO Client (mc)
+FROM quay.io/minio/mc:latest
+
+# Copy seed script into the image
+COPY docker/minio-seed.sh /usr/local/bin/minio-seed.sh
+RUN chmod +x /usr/local/bin/minio-seed.sh
+
+# Run the seeding script by default
+ENTRYPOINT ["/usr/local/bin/minio-seed.sh"]
+

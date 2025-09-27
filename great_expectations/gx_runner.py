@@ -3,7 +3,7 @@ import json
 import os
 import sys
 from datetime import datetime
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 import yaml
 from sqlalchemy import create_engine, inspect
@@ -15,8 +15,20 @@ except Exception as e:
     print(f"Failed to import great_expectations: {e}", file=sys.stderr)
     sys.exit(2)
 
+try:
+    import boto3  # type: ignore
+except Exception:
+    boto3 = None  # optional; we will skip upload if missing
+
 
 def load_config(path: str) -> Dict[str, Any]:
+    inline = os.getenv("CONFIG_YAML")
+    if inline:
+        try:
+            return yaml.safe_load(inline)
+        except Exception as e:
+            print(f"Failed to parse CONFIG_YAML: {e}", file=sys.stderr)
+            sys.exit(3)
     with open(path, "r", encoding="utf-8") as f:
         return yaml.safe_load(f)
 
@@ -44,6 +56,44 @@ def ensure_sql_datasource(context: Any, name: str, connection_string: str):
         return context.get_datasource(name)
     except Exception as e:
         raise RuntimeError(f"Could not create or fetch SQL datasource '{name}': {e}")
+
+
+def maybe_upload_to_s3(local_path: str, schema: str, table_name: str) -> None:
+    """Optionally upload validation JSON to S3/MinIO if GX_UPLOAD_BUCKET/DEFAULT_DATA_BUCKET is set.
+    Never raises on failure; prints a warning and returns.
+    Env vars used:
+      - GX_UPLOAD_BUCKET or DEFAULT_DATA_BUCKET: bucket name
+      - GX_S3_PREFIX (default 'ge/validations'): key prefix
+      - S3_ENDPOINT_URL (optional; for MinIO)
+      - AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY / AWS_DEFAULT_REGION
+      - S3_VERIFY_SSL ('true'/'false', default 'false' for MinIO)
+    """
+    bucket = os.getenv("GX_UPLOAD_BUCKET") or os.getenv("DEFAULT_DATA_BUCKET")
+    if not bucket:
+        return  # nothing to do
+    if boto3 is None:
+        print("Skipping upload: boto3 not available in this image", file=sys.stderr)
+        return
+
+    prefix = os.getenv("GX_S3_PREFIX", "ge/validations")
+    endpoint_url = os.getenv("S3_ENDPOINT_URL")
+    region = os.getenv("AWS_DEFAULT_REGION", "us-east-1")
+    verify_env = os.getenv("S3_VERIFY_SSL", "false").lower()
+    verify = verify_env in ("1", "true", "yes")
+
+    key = f"{prefix}/{schema}.{table_name}_" + os.path.basename(local_path)
+
+    try:
+        session = boto3.session.Session(
+            aws_access_key_id=os.getenv("AWS_ACCESS_KEY_ID"),
+            aws_secret_access_key=os.getenv("AWS_SECRET_ACCESS_KEY"),
+            region_name=region,
+        )
+        s3 = session.client("s3", endpoint_url=endpoint_url, verify=verify)
+        s3.upload_file(local_path, bucket, key)
+        print(f"Uploaded validation to s3://{bucket}/{key}")
+    except Exception as e:
+        print(f"WARNING: Failed to upload validation to S3: {e}", file=sys.stderr)
 
 
 def apply_table_expectations_validator(validator: Any, checks: List[Dict[str, Any]]):
@@ -137,9 +187,16 @@ def run_for_table(context: Any, engine, datasource, schema: str, table_name: str
     # Persist result JSON
     os.makedirs(output_dir, exist_ok=True)
     ts = datetime.utcnow().strftime("%Y%m%dT%H%M%SZ")
-    out_path = os.path.join(output_dir, f"{schema}.{table_name}_{ts}.json")
+    out_name = f"{schema}.{table_name}_{ts}.json"
+    out_path = os.path.join(output_dir, out_name)
     with open(out_path, "w", encoding="utf-8") as f:
         json.dump(result_dict, f, indent=2, default=str)
+
+    # Optional S3/MinIO upload (fail-safe)
+    try:
+        maybe_upload_to_s3(out_path, schema, table_name)
+    except Exception as e:
+        print(f"WARNING: unexpected error during S3 upload: {e}", file=sys.stderr)
 
     return result_dict
 
