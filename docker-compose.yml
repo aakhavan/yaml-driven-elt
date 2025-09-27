@@ -11,6 +11,10 @@ x-airflow-common: &airflow-common
     AIRFLOW__CORE__FERNET_KEY: ${AIRFLOW__CORE__FERNET_KEY}
     AIRFLOW_CONN_MINIO_S3: ${AIRFLOW_CONN_MINIO_S3}
     AIRFLOW_CONN_POSTGRES_WAREHOUSE: ${AIRFLOW_CONN_POSTGRES_WAREHOUSE}
+    # For DAG logic to pass to GX containers
+    MINIO_ROOT_USER: ${MINIO_ROOT_USER}
+    MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+    DEFAULT_DATA_BUCKET: ${DEFAULT_DATA_BUCKET}
   volumes:
     - ./airflow/dags:/opt/airflow/dags
     - ./airflow/plugins:/opt/airflow/plugins
@@ -60,7 +64,9 @@ services:
       - minio_data:/data
 
   minio-seed:
-    image: quay.io/minio/mc:latest
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.minio
     container_name: minio-seed
     depends_on:
       - minio
@@ -70,38 +76,11 @@ services:
       MINIO_ALIAS: minio
       MINIO_ENDPOINT: http://minio:9000
       MINIO_BUCKET: olist
+      # Optional tuning for readiness retries
+      MINIO_READY_RETRIES: "90"
+      MINIO_READY_SLEEP: "2"
     volumes:
       - ./data:/seed/data:ro
-    entrypoint:
-      - /bin/sh
-      - -lc
-      - |
-        set -e
-
-        : "$${MINIO_ALIAS:=minio}"
-        : "$${MINIO_ENDPOINT:=http://minio:9000}"
-        : "$${MINIO_BUCKET:=olist}"
-
-        echo "Configuring mc alias..."
-        mc alias set "$${MINIO_ALIAS}" "$${MINIO_ENDPOINT}" "$${MINIO_ROOT_USER}" "$${MINIO_ROOT_PASSWORD}"
-
-        echo "Waiting for MinIO..."
-        until mc ls "$${MINIO_ALIAS}" >/dev/null 2>&1; do
-          sleep 2
-        done
-
-        echo "Creating bucket $${MINIO_BUCKET} (if not exists)..."
-        mc mb -p "$${MINIO_ALIAS}/$${MINIO_BUCKET}" || true
-
-        echo "Uploading CSV files from /seed/data..."
-        if ls /seed/data/*.csv >/dev/null 2>&1; then
-          mc cp --recursive /seed/data/*.csv "$${MINIO_ALIAS}/$${MINIO_BUCKET}/"
-        else
-          echo "No CSV files found in /seed/data"
-        fi
-
-        echo "Listing bucket contents:"
-        mc ls "$${MINIO_ALIAS}/$${MINIO_BUCKET}" || true
     restart: "no"
 
   airflow-init:
@@ -140,6 +119,12 @@ services:
     ports:
       - "8080:8080"
     command: ["airflow", "webserver"]
+    volumes:
+      - ./airflow/dags:/opt/airflow/dags
+      - ./airflow/plugins:/opt/airflow/plugins
+      - ./dbt:/opt/airflow/dbt
+      - ./great_expectations:/opt/airflow/great_expectations
+      - /var/run/docker.sock:/var/run/docker.sock
 
   airflow-scheduler:
     <<: *airflow-common
@@ -155,6 +140,30 @@ services:
       minio-seed:
         condition: service_completed_successfully
     command: ["airflow", "scheduler"]
+    volumes:
+      - ./airflow/dags:/opt/airflow/dags
+      - ./airflow/plugins:/opt/airflow/plugins
+      - ./dbt:/opt/airflow/dbt
+      - ./great_expectations:/opt/airflow/great_expectations
+      - /var/run/docker.sock:/var/run/docker.sock
+
+  gx-runner:
+    image: yaml_driven_elt/gx-runner:latest
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.gx
+    depends_on:
+      postgres-warehouse:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql+psycopg2://warehouse:warehouse@postgres-warehouse:5432/warehouse
+      GX_CONTEXT_ROOT_DIR: /app/gx
+    volumes:
+      - ./airflow/dags/configs/olist.yml:/app/config.yml:ro
+      - ./great_expectations/validations:/app/output
+      - ./great_expectations/context:/app/gx
+    command: ["python", "/app/gx_runner.py", "--config", "/app/config.yml", "--source-id", "olist_poc", "--build-docs"]
+    restart: "no"
 
 volumes:
   minio_data:

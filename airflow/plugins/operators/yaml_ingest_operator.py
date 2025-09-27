@@ -208,6 +208,24 @@ def _run_quality_checks(hook: PostgresHook, schema: str, table: str, quality: Di
     return summary
 
 
+def _lock_key_for_schema(schema: str) -> str:
+    # Use pg advisory lock with hashtext(schema)
+    return "SELECT pg_advisory_lock(hashtext(%s))"
+
+
+def _unlock_key_for_schema(schema: str) -> str:
+    return "SELECT pg_advisory_unlock(hashtext(%s))"
+
+
+def _lock_key_for_table(schema: str, table: str) -> str:
+    # Lock on combined identifier to serialize CREATE TABLE for same target
+    return "SELECT pg_advisory_lock(hashtext(%s || '.' || %s))"
+
+
+def _unlock_key_for_table(schema: str, table: str) -> str:
+    return "SELECT pg_advisory_unlock(hashtext(%s || '.' || %s))"
+
+
 class YamlDrivenIngestOperator(BaseOperator):
     """
     YAML-driven ingest: S3 CSV -> Postgres with optional typed table_definition and quality.
@@ -226,6 +244,7 @@ class YamlDrivenIngestOperator(BaseOperator):
         dest_conn_id: str = "postgres_warehouse",
         run_id: Optional[str] = None,
         create_table_if_not_exists: bool = True,
+        display_name: Optional[str] = None,
         **kwargs,
     ) -> None:
         super().__init__(**kwargs)
@@ -235,6 +254,25 @@ class YamlDrivenIngestOperator(BaseOperator):
         self.dest_conn_id = dest_conn_id
         self.run_id = run_id
         self.create_table_if_not_exists = create_table_if_not_exists
+        self.display_name = display_name
+
+    # New: show schema.table or provided display_name in the UI for mapped tasks
+    def get_task_display_name(self, context: Context) -> str:
+        if self.display_name:
+            return self.display_name
+        try:
+            cfg = self.inline_config
+            if isinstance(cfg, dict):
+                dest = cfg.get("destination") or {}
+                schema = dest.get("schema")
+                table = dest.get("table")
+                if schema and table:
+                    return f"{schema}.{table}"
+                if table:
+                    return str(table)
+        except Exception:
+            pass
+        return super().get_task_display_name(context)
 
     def _read_header(self, buf: io.BytesIO) -> List[str]:
         buf.seek(0)
@@ -315,12 +353,27 @@ class YamlDrivenIngestOperator(BaseOperator):
         copy_cols_list = ", ".join(f'"{c}"' for c in header_ids)
 
         with conn.cursor() as cursor:
-            # Ensure schema and table exist
-            cursor.execute(f'CREATE SCHEMA IF NOT EXISTS "{schema}"')
+            # Ensure schema and table exist with concurrency-safe locks
+            try:
+                # Schema-level lock
+                cursor.execute(_lock_key_for_schema(schema), (schema,))
+                cursor.execute(f'CREATE SCHEMA IF NOT EXISTS "{schema}"')
+            finally:
+                cursor.execute(_unlock_key_for_schema(schema), (schema,))
+
+            # Table creation under a table-specific lock
             if col_defs_sql:
-                cursor.execute(f"CREATE TABLE IF NOT EXISTS {full_table} ({', '.join(col_defs_sql)}{pk_sql})")
+                try:
+                    cursor.execute(_lock_key_for_table(schema, table), (schema, table))
+                    cursor.execute(f"CREATE TABLE IF NOT EXISTS {full_table} ({', '.join(col_defs_sql)}{pk_sql})")
+                finally:
+                    cursor.execute(_unlock_key_for_table(schema, table), (schema, table))
             else:
-                cursor.execute(f"CREATE TABLE IF NOT EXISTS {full_table} (data TEXT)")
+                try:
+                    cursor.execute(_lock_key_for_table(schema, table), (schema, table))
+                    cursor.execute(f"CREATE TABLE IF NOT EXISTS {full_table} (data TEXT)")
+                finally:
+                    cursor.execute(_unlock_key_for_table(schema, table), (schema, table))
 
             if write_mode == "truncate-insert":
                 cursor.execute(f"TRUNCATE TABLE {full_table}")
